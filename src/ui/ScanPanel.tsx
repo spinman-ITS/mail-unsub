@@ -77,7 +77,7 @@ export function ScanPanel({ aadClientId, userEmail }: { aadClientId: string | nu
       if (httpsUrl) {
         const response = candidate.headers.oneClick
           ? await performOneClickUnsubscribe(httpsUrl)
-          : await performBodyLinkUnsubscribe(httpsUrl);
+          : await performBodyLinkUnsubscribe(httpsUrl, userEmail);
 
         if (!response.ok) {
           setRow(candidate.messageId, "failed", response.message);

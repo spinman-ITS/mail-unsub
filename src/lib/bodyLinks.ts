@@ -3,7 +3,8 @@ export type BodyUnsubscribeLink = {
   label: string;
 };
 
-const unsubscribeWords = /\b(unsubscribe|opt[\s-]?out|email preferences|subscription preferences|manage preferences)\b/i;
+const unsubscribeWords =
+  /\b(unsubscribe|opt[\s-]?out|email preferences|subscription preferences|manage preferences|preference center|communication preferences|update (?:your |my )?preferences)\b/i;
 
 export function findBodyUnsubscribeLinks(htmlOrText: string): BodyUnsubscribeLink[] {
   const doc = new DOMParser().parseFromString(htmlOrText, "text/html");
@@ -21,12 +22,15 @@ export function findBodyUnsubscribeLinks(htmlOrText: string): BodyUnsubscribeLin
     const nearbyText = genericText ? normalizeWhitespace(anchor.parentElement?.textContent || "") : "";
     const combined = `${ownText} ${nearbyText}`;
 
-    if (unsubscribeWords.test(combined) || href.toLowerCase().includes("unsubscribe")) {
+    const hrefLower = href.toLowerCase();
+    if (unsubscribeWords.test(combined) || hrefLower.includes("unsubscribe") || hrefLower.includes("preference")) {
       candidates.push({ url: href, label: label || href });
     }
   }
 
-  return uniqueByUrl(candidates);
+  // Explicit unsubscribe links beat preference-page links: callers use the first match.
+  const score = (link: BodyUnsubscribeLink) => (`${link.url} ${link.label}`.toLowerCase().includes("unsubscribe") ? 0 : 1);
+  return uniqueByUrl(candidates).sort((a, b) => score(a) - score(b));
 }
 
 function isSupportedHref(href: string): boolean {

@@ -128,7 +128,9 @@ export function App() {
 
     try {
       const response =
-        method === "one-click" ? await performOneClickUnsubscribe(url) : await performBodyLinkUnsubscribe(url);
+        method === "one-click"
+          ? await performOneClickUnsubscribe(url)
+          : await performBodyLinkUnsubscribe(url, readCurrentMessageInfo()?.userEmail);
 
       if (!response.ok) {
         setState("error");

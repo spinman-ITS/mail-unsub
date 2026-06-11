@@ -22,8 +22,8 @@ export async function performOneClickUnsubscribe(url: string): Promise<OneClickR
   return postUnsubscribeRequest("/api/unsubscribe", url);
 }
 
-export async function performBodyLinkUnsubscribe(url: string): Promise<OneClickResponse> {
-  return postUnsubscribeRequest("/api/unsubscribe-link", url);
+export async function performBodyLinkUnsubscribe(url: string, userEmail?: string): Promise<OneClickResponse> {
+  return postUnsubscribeRequest("/api/unsubscribe-link", url, userEmail);
 }
 
 export async function fetchAppConfig(): Promise<AppConfig> {
@@ -63,13 +63,13 @@ export async function fetchUnsubscribedSenders(userEmail: string): Promise<Unsub
   }
 }
 
-async function postUnsubscribeRequest(path: string, url: string): Promise<OneClickResponse> {
+async function postUnsubscribeRequest(path: string, url: string, userEmail?: string): Promise<OneClickResponse> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ url })
+    body: JSON.stringify({ url, userEmail })
   });
 
   const payload = (await response.json().catch(() => null)) as Partial<OneClickResponse> | null;

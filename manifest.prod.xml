@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+  xsi:type="MailApp">
+  <Id>8c2b7f6e-41a3-4f0b-9d35-6b1f2a9c7d44</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Inman Technologies</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Unsubscribe" />
+  <Description DefaultValue="Finds safe standards-based unsubscribe methods for the selected message." />
+  <IconUrl DefaultValue="https://mail-unsub-production.up.railway.app/assets/generated-icons/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://mail-unsub-production.up.railway.app/assets/generated-icons/icon-128.png" />
+  <SupportUrl DefaultValue="https://mail-unsub-production.up.railway.app/" />
+  <AppDomains>
+    <AppDomain>https://mail-unsub-production.up.railway.app</AppDomain>
+    <AppDomain>https://mail-unsub-production.up.railway.app</AppDomain>
+    <AppDomain>https://login.microsoftonline.com</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Mailbox" />
+  </Hosts>
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.8" />
+    </Sets>
+  </Requirements>
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="https://mail-unsub-production.up.railway.app/taskpane.html" />
+        <RequestedHeight>450</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+  <Permissions>ReadItem</Permissions>
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read" />
+  </Rule>
+  <DisableEntityHighlighting>false</DisableEntityHighlighting>
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Requirements>
+      <bt:Sets DefaultMinVersion="1.8">
+        <bt:Set Name="Mailbox" />
+      </bt:Sets>
+    </Requirements>
+    <Hosts>
+      <Host xsi:type="MailHost">
+        <DesktopFormFactor>
+          <FunctionFile resid="Commands.Url" />
+          <ExtensionPoint xsi:type="MessageReadCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="Unsubscribe.Group">
+                <Label resid="Group.Label" />
+                <Control xsi:type="Button" id="Unsubscribe.OpenPane">
+                  <Label resid="Button.Label" />
+                  <Supertip>
+                    <Title resid="Button.Label" />
+                    <Description resid="Button.Tooltip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16" />
+                    <bt:Image size="32" resid="Icon.32" />
+                    <bt:Image size="80" resid="Icon.80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16" DefaultValue="https://mail-unsub-production.up.railway.app/assets/generated-icons/icon-16.png" />
+        <bt:Image id="Icon.32" DefaultValue="https://mail-unsub-production.up.railway.app/assets/generated-icons/icon-32.png" />
+        <bt:Image id="Icon.80" DefaultValue="https://mail-unsub-production.up.railway.app/assets/generated-icons/icon-80.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Commands.Url" DefaultValue="https://mail-unsub-production.up.railway.app/taskpane.html" />
+        <bt:Url id="Taskpane.Url" DefaultValue="https://mail-unsub-production.up.railway.app/taskpane.html" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="Group.Label" DefaultValue="Message tools" />
+        <bt:String id="Button.Label" DefaultValue="Unsubscribe" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="Button.Tooltip" DefaultValue="Check this message for a safe unsubscribe method." />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

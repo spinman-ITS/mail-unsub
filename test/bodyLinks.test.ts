@@ -1,0 +1,33 @@
+import { describe, expect, it } from "vitest";
+import { findBodyUnsubscribeLinks } from "../src/lib/bodyLinks";
+
+describe("findBodyUnsubscribeLinks", () => {
+  it("finds visible unsubscribe links in HTML email bodies", () => {
+    const links = findBodyUnsubscribeLinks(`
+      <p>This message was sent to you.</p>
+      <a href="https://example.com/preferences">Privacy</a>
+      <a href="https://example.com/unsubscribe?id=abc">Unsubscribe</a>
+    `);
+
+    expect(links).toEqual([{ url: "https://example.com/unsubscribe?id=abc", label: "Unsubscribe" }]);
+  });
+
+  it("finds rewritten unsubscribe URLs when the link text says click here", () => {
+    const links = findBodyUnsubscribeLinks(`
+      To unsubscribe <a href="https://protect.checkpoint.com/v2/r01/___https://sender.example.com/communication/subscribe?id=123___.abc">click here</a>.
+    `);
+
+    expect(links).toEqual([
+      {
+        url: "https://protect.checkpoint.com/v2/r01/___https://sender.example.com/communication/subscribe?id=123___.abc",
+        label: "click here"
+      }
+    ]);
+  });
+
+  it("ignores unrelated links", () => {
+    const links = findBodyUnsubscribeLinks('<a href="https://example.com/register">Register</a>');
+
+    expect(links).toEqual([]);
+  });
+});

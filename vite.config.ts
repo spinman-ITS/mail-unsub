@@ -1,14 +1,16 @@
 import react from "@vitejs/plugin-react";
-import { getHttpsServerOptions } from "office-addin-dev-certs";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 
-export default defineConfig(async () => ({
+export default defineConfig(async ({ command }) => ({
   plugins: [react()],
   server: {
     port: 3003,
     strictPort: false,
-    https: await getHttpsServerOptions(365)
+    https:
+      command === "serve"
+        ? await (await import("office-addin-dev-certs")).getHttpsServerOptions(365)
+        : undefined
   },
   build: {
     outDir: "dist",

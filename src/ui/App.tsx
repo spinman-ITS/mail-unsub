@@ -1,5 +1,5 @@
 import { AlertCircle, CheckCircle2, Loader2, Mail, ShieldCheck, Undo2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { findBodyUnsubscribeLinks } from "../lib/bodyLinks";
 import { getCurrentMessageRestId, moveMessageToDeletedItems } from "../lib/graph";
 import { parseUnsubscribeHeaders, type UnsubscribeHeaders } from "../lib/headerParser";
@@ -28,6 +28,8 @@ export function App() {
   const [state, setState] = useState<UiState>("booting");
   const [view, setView] = useState<View>("message");
   const [aadClientId, setAadClientId] = useState<string | null>(null);
+  // The auto-run unsubscribe closure starts before state updates land, so it reads the ref.
+  const aadClientIdRef = useRef<string | null>(null);
   const [headers, setHeaders] = useState<UnsubscribeHeaders | null>(null);
   const [notice, setNotice] = useState<Notice>({
     title: "Preparing unsubscribe",
@@ -43,6 +45,7 @@ export function App() {
         return;
       }
 
+      aadClientIdRef.current = config.aadClientId;
       setAadClientId(config.aadClientId);
       setIsOutlookMessage(hasContext);
 
@@ -154,13 +157,14 @@ export function App() {
       await recordUnsubscribedSender(info.userEmail, info.senderAddress, method);
     }
 
-    if (!aadClientId) {
-      return "";
+    const clientId = aadClientIdRef.current;
+    if (!clientId) {
+      return " Set up Microsoft Graph access to move handled emails to Deleted Items.";
     }
 
     try {
       const restId = getCurrentMessageRestId();
-      await moveMessageToDeletedItems(aadClientId, restId);
+      await moveMessageToDeletedItems(clientId, restId);
       return " The email was moved to Deleted Items.";
     } catch {
       return " The email could not be moved to Deleted Items automatically.";

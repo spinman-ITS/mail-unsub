@@ -9,7 +9,9 @@ import {
   recordUnsubscribedSender
 } from "../lib/unsubscribeClient";
 
-type RowState = "idle" | "working" | "done" | "failed" | "mailto";
+type RowStatus = "idle" | "working" | "done" | "failed" | "mailto";
+
+type RowState = { status: RowStatus; note?: string };
 
 type ScanState = "idle" | "scanning" | "ready" | "error";
 
@@ -18,6 +20,10 @@ export function ScanPanel({ aadClientId, userEmail }: { aadClientId: string | nu
   const [message, setMessage] = useState<string>("");
   const [candidates, setCandidates] = useState<ScanCandidate[]>([]);
   const [rowStates, setRowStates] = useState<Record<string, RowState>>({});
+
+  function setRow(messageId: string, status: RowStatus, note?: string) {
+    setRowStates((current) => ({ ...current, [messageId]: { status, note } }));
+  }
 
   if (!aadClientId) {
     return (
@@ -62,7 +68,7 @@ export function ScanPanel({ aadClientId, userEmail }: { aadClientId: string | nu
   }
 
   async function unsubscribeCandidate(candidate: ScanCandidate) {
-    setRowStates((current) => ({ ...current, [candidate.messageId]: "working" }));
+    setRow(candidate.messageId, "working");
 
     const httpsUrl = candidate.headers.httpsUrls[0];
     const mailtoUrl = candidate.headers.mailtoUrls[0];
@@ -74,26 +80,32 @@ export function ScanPanel({ aadClientId, userEmail }: { aadClientId: string | nu
           : await performBodyLinkUnsubscribe(httpsUrl);
 
         if (!response.ok) {
-          setRowStates((current) => ({ ...current, [candidate.messageId]: "failed" }));
+          setRow(candidate.messageId, "failed", response.message);
           return;
         }
 
         await recordUnsubscribedSender(userEmail, candidate.senderAddress, candidate.headers.oneClick ? "one-click" : "https-link");
-        await moveMessageToDeletedItems(aadClientId!, candidate.messageId).catch(() => undefined);
-        setRowStates((current) => ({ ...current, [candidate.messageId]: "done" }));
+        const moved = await moveMessageToDeletedItems(aadClientId!, candidate.messageId)
+          .then(() => true)
+          .catch(() => false);
+        setRow(
+          candidate.messageId,
+          "done",
+          moved ? "Unsubscribed and moved to Deleted Items." : "Unsubscribed, but the email could not be deleted."
+        );
         return;
       }
 
       if (mailtoUrl) {
         await recordUnsubscribedSender(userEmail, candidate.senderAddress, "mailto");
-        setRowStates((current) => ({ ...current, [candidate.messageId]: "mailto" }));
+        setRow(candidate.messageId, "mailto", "This sender uses email-based unsubscribe; an email was opened.");
         window.location.href = mailtoUrl;
         return;
       }
 
-      setRowStates((current) => ({ ...current, [candidate.messageId]: "failed" }));
+      setRow(candidate.messageId, "failed", "No usable unsubscribe method.");
     } catch {
-      setRowStates((current) => ({ ...current, [candidate.messageId]: "failed" }));
+      setRow(candidate.messageId, "failed", "The unsubscribe request failed.");
     }
   }
 
@@ -109,34 +121,39 @@ export function ScanPanel({ aadClientId, userEmail }: { aadClientId: string | nu
       {candidates.length > 0 ? (
         <ul className="scan-list">
           {candidates.map((candidate) => {
-            const rowState = rowStates[candidate.messageId] ?? "idle";
+            const row = rowStates[candidate.messageId] ?? { status: "idle" as RowStatus };
             return (
               <li key={candidate.messageId}>
-                <div className="scan-sender">
-                  <strong>{candidate.senderName}</strong>
-                  <span>{candidate.senderAddress}</span>
-                  <span className="scan-subject">{candidate.subject}</span>
+                <div className="scan-row">
+                  <div className="scan-sender">
+                    <strong>{candidate.senderName}</strong>
+                    <span>{candidate.senderAddress}</span>
+                    <span className="scan-subject">{candidate.subject}</span>
+                  </div>
+                  <div className="scan-action">
+                    {row.status === "idle" ? (
+                      <button className="quiet" onClick={() => unsubscribeCandidate(candidate)}>
+                        <Trash2 size={16} />
+                        Unsubscribe
+                      </button>
+                    ) : row.status === "working" ? (
+                      <Loader2 className="spin" size={18} />
+                    ) : row.status === "done" ? (
+                      <span className="scan-done">
+                        <CheckCircle2 size={16} /> Unsubscribed
+                      </span>
+                    ) : row.status === "mailto" ? (
+                      <span className="scan-done">
+                        <Mail size={16} /> Email opened
+                      </span>
+                    ) : (
+                      <span className="scan-failed">Failed</span>
+                    )}
+                  </div>
                 </div>
-                <div className="scan-action">
-                  {rowState === "idle" ? (
-                    <button className="quiet" onClick={() => unsubscribeCandidate(candidate)}>
-                      <Trash2 size={16} />
-                      Unsubscribe
-                    </button>
-                  ) : rowState === "working" ? (
-                    <Loader2 className="spin" size={18} />
-                  ) : rowState === "done" ? (
-                    <span className="scan-done">
-                      <CheckCircle2 size={16} /> Done
-                    </span>
-                  ) : rowState === "mailto" ? (
-                    <span className="scan-done">
-                      <Mail size={16} /> Email opened
-                    </span>
-                  ) : (
-                    <span className="scan-failed">Failed</span>
-                  )}
-                </div>
+                {row.note ? (
+                  <p className={row.status === "failed" ? "scan-row-note scan-error" : "scan-row-note"}>{row.note}</p>
+                ) : null}
               </li>
             );
           })}

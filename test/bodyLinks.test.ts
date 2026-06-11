@@ -38,6 +38,16 @@ describe("findBodyUnsubscribeLinks", () => {
     ]);
   });
 
+  it("finds security-rewritten opaque links when the sentence is outside the anchor's parent", () => {
+    const links = findBodyUnsubscribeLinks(`
+      <td><p>To unsubscribe from emails, <span><a href="https://protect.example-scanner.com/s/AbC123xyz">click here</a></span>.</p></td>
+    `);
+
+    expect(links).toEqual([
+      { url: "https://protect.example-scanner.com/s/AbC123xyz", label: "click here" }
+    ]);
+  });
+
   it("ignores unrelated links", () => {
     const links = findBodyUnsubscribeLinks('<a href="https://example.com/register">Register</a>');
 

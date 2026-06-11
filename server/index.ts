@@ -133,97 +133,84 @@ async function submitUnsubscribeRequest(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  const maxRedirects = 3;
 
   try {
-    const unsubscribeResponse = await fetch(validation.url, {
-      method,
-      redirect: "manual",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "Outlook-Unsubscribe-Addin/0.1"
-      },
-      body: method === "POST" ? "List-Unsubscribe=One-Click" : undefined
-    });
+    let currentUrl = validation.url;
+    let finalResponse: Response | null = null;
 
-    const location = unsubscribeResponse.headers.get("location");
-    const resolvedLocation = location ? new URL(location, validation.url).toString() : undefined;
-    if (resolvedLocation && !isSafeRedirectTarget(resolvedLocation)) {
-      addAuditEntry({
-        method,
-        target: redactUrl(validation.url),
-        outcome: "blocked",
-        status: unsubscribeResponse.status,
-        message: "Unsafe redirect was not followed.",
-        redirectTarget: redactUrl(resolvedLocation)
-      });
-      response.status(502).json({
-        ok: false,
-        status: unsubscribeResponse.status,
-        message: "The sender returned an unsafe redirect, so it was not followed."
-      });
-      return;
-    }
-
-    if (resolvedLocation) {
-      const redirectedResponse = await fetch(resolvedLocation, {
-        method: "GET",
+    for (let hop = 0; hop <= maxRedirects; hop++) {
+      const hopResponse = await fetch(currentUrl, {
+        method: hop === 0 ? method : "GET",
         redirect: "manual",
         signal: controller.signal,
         headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
           "User-Agent": "Outlook-Unsubscribe-Addin/0.1"
-        }
+        },
+        body: hop === 0 && method === "POST" ? "List-Unsubscribe=One-Click" : undefined
       });
 
-      addAuditEntry({
-        method,
-        target: redactUrl(validation.url),
-        outcome: redirectedResponse.status >= 200 && redirectedResponse.status < 400 ? "accepted" : "failed",
-        status: redirectedResponse.status,
-        message:
-          redirectedResponse.status >= 200 && redirectedResponse.status < 400
-            ? "Safe redirect followed."
-            : `Safe redirect returned HTTP ${redirectedResponse.status}.`,
-        redirectTarget: redactUrl(resolvedLocation)
-      });
+      const location = hopResponse.headers.get("location");
+      const isRedirect = hopResponse.status >= 300 && hopResponse.status < 400 && location;
 
-      if (redirectedResponse.status >= 200 && redirectedResponse.status < 400) {
-        const formMessage =
-          method === "GET" && userEmail
-            ? await tryPreferenceFormSubmit(redirectedResponse, resolvedLocation, userEmail)
-            : null;
-        response.json({
-          ok: true,
-          status: redirectedResponse.status,
-          message: formMessage ?? "The sender's unsubscribe redirect was opened successfully."
+      if (!isRedirect) {
+        finalResponse = hopResponse;
+        break;
+      }
+
+      const resolvedLocation = new URL(location, currentUrl).toString();
+      if (!isSafeRedirectTarget(resolvedLocation)) {
+        addAuditEntry({
+          method,
+          target: redactUrl(validation.url),
+          outcome: "blocked",
+          status: hopResponse.status,
+          message: "Unsafe redirect was not followed.",
+          redirectTarget: redactUrl(resolvedLocation)
+        });
+        response.status(502).json({
+          ok: false,
+          status: hopResponse.status,
+          message: "The sender returned an unsafe redirect, so it was not followed."
         });
         return;
       }
 
+      currentUrl = resolvedLocation;
+    }
+
+    if (!finalResponse) {
+      addAuditEntry({
+        method,
+        target: redactUrl(validation.url),
+        outcome: "failed",
+        message: `More than ${maxRedirects} redirects; gave up.`
+      });
       response.status(502).json({
         ok: false,
-        status: redirectedResponse.status,
-        message: `The sender's unsubscribe redirect returned HTTP ${redirectedResponse.status}.`
+        message: "The unsubscribe link redirected too many times."
       });
       return;
     }
 
-    if (unsubscribeResponse.status >= 200 && unsubscribeResponse.status < 400) {
+    if (finalResponse.status >= 200 && finalResponse.status < 300) {
       addAuditEntry({
         method,
         target: redactUrl(validation.url),
         outcome: "accepted",
-        status: unsubscribeResponse.status,
-        message: method === "POST" ? "One-click unsubscribe accepted." : "Unsubscribe link opened."
+        status: finalResponse.status,
+        message: method === "POST" ? "One-click unsubscribe accepted." : "Unsubscribe link opened.",
+        redirectTarget: currentUrl === validation.url ? undefined : redactUrl(currentUrl)
       });
       const formMessage =
         method === "GET" && userEmail
-          ? await tryPreferenceFormSubmit(unsubscribeResponse, validation.url, userEmail)
+          ? await tryPreferenceFormSubmit(finalResponse, currentUrl, userEmail)
           : null;
       response.json({
         ok: true,
-        status: unsubscribeResponse.status,
+        status: finalResponse.status,
         message:
           formMessage ??
           (method === "POST"
@@ -237,13 +224,14 @@ async function submitUnsubscribeRequest(
       method,
       target: redactUrl(validation.url),
       outcome: "failed",
-      status: unsubscribeResponse.status,
-      message: `Sender returned HTTP ${unsubscribeResponse.status}.`
+      status: finalResponse.status,
+      message: `Sender returned HTTP ${finalResponse.status}.`,
+      redirectTarget: currentUrl === validation.url ? undefined : redactUrl(currentUrl)
     });
     response.status(502).json({
       ok: false,
-      status: unsubscribeResponse.status,
-      message: `The sender returned HTTP ${unsubscribeResponse.status}.`
+      status: finalResponse.status,
+      message: `The sender returned HTTP ${finalResponse.status}.`
     });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "AbortError";

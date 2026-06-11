@@ -18,8 +18,9 @@ export function findBodyUnsubscribeLinks(htmlOrText: string): BodyUnsubscribeLin
 
     const label = normalizeWhitespace(anchor.textContent || href);
     const ownText = `${label} ${href}`;
-    const genericText = /^(click here|here|manage|update)$/i.test(label);
-    const nearbyText = genericText ? normalizeWhitespace(anchor.parentElement?.textContent || "") : "";
+    // Short/generic labels ("click here") need the surrounding sentence to judge intent.
+    const genericText = /^(click here|here|tap here|manage|update|view)\W*$/i.test(label) || label.length <= 14;
+    const nearbyText = genericText ? surroundingText(anchor) : "";
     const combined = `${ownText} ${nearbyText}`;
 
     const hrefLower = href.toLowerCase();
@@ -31,6 +32,21 @@ export function findBodyUnsubscribeLinks(htmlOrText: string): BodyUnsubscribeLin
   // Explicit unsubscribe links beat preference-page links: callers use the first match.
   const score = (link: BodyUnsubscribeLink) => (`${link.url} ${link.label}`.toLowerCase().includes("unsubscribe") ? 0 : 1);
   return uniqueByUrl(candidates).sort((a, b) => score(a) - score(b));
+}
+
+function surroundingText(anchor: Element): string {
+  let node: Element | null = anchor.parentElement;
+  let best = "";
+
+  for (let depth = 0; node && depth < 4; depth++) {
+    best = normalizeWhitespace(node.textContent || "").slice(0, 400);
+    if (best.length >= 30 || unsubscribeWords.test(best)) {
+      break;
+    }
+    node = node.parentElement;
+  }
+
+  return best;
 }
 
 function isSupportedHref(href: string): boolean {

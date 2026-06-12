@@ -8,6 +8,7 @@ import {
   performOneClickUnsubscribe,
   recordUnsubscribedSender
 } from "../lib/unsubscribeClient";
+import { openDialogAndWait } from "../office/dialog";
 
 type RowStatus = "idle" | "working" | "done" | "failed" | "mailto";
 
@@ -77,11 +78,16 @@ export function ScanPanel({ aadClientId, userEmail }: { aadClientId: string | nu
       if (httpsUrl) {
         const response = candidate.headers.oneClick
           ? await performOneClickUnsubscribe(httpsUrl)
-          : await performBodyLinkUnsubscribe(httpsUrl, userEmail);
+          : await performBodyLinkUnsubscribe(httpsUrl);
 
         if (!response.ok) {
           setRow(candidate.messageId, "failed", response.message);
           return;
+        }
+
+        if (response.requiresBrowser && response.finalUrl) {
+          setRow(candidate.messageId, "working", "Opening preference page — complete it in the dialog.");
+          await openDialogAndWait(response.finalUrl);
         }
 
         await recordUnsubscribedSender(userEmail, candidate.senderAddress, candidate.headers.oneClick ? "one-click" : "https-link");

@@ -2,6 +2,8 @@ export type OneClickResponse = {
   ok: boolean;
   message: string;
   status?: number;
+  requiresBrowser?: boolean;
+  finalUrl?: string;
 };
 
 export type AppConfig = {
@@ -22,8 +24,8 @@ export async function performOneClickUnsubscribe(url: string): Promise<OneClickR
   return postUnsubscribeRequest("/api/unsubscribe", url);
 }
 
-export async function performBodyLinkUnsubscribe(url: string, userEmail?: string): Promise<OneClickResponse> {
-  return postUnsubscribeRequest("/api/unsubscribe-link", url, userEmail);
+export async function performBodyLinkUnsubscribe(url: string): Promise<OneClickResponse> {
+  return postUnsubscribeRequest("/api/unsubscribe-link", url);
 }
 
 export async function fetchAppConfig(): Promise<AppConfig> {
@@ -63,13 +65,13 @@ export async function fetchUnsubscribedSenders(userEmail: string): Promise<Unsub
   }
 }
 
-async function postUnsubscribeRequest(path: string, url: string, userEmail?: string): Promise<OneClickResponse> {
+async function postUnsubscribeRequest(path: string, url: string): Promise<OneClickResponse> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ url, userEmail })
+    body: JSON.stringify({ url })
   });
 
   const payload = (await response.json().catch(() => null)) as Partial<OneClickResponse> | null;
@@ -85,6 +87,8 @@ async function postUnsubscribeRequest(path: string, url: string, userEmail?: str
   return {
     ok: Boolean(payload?.ok),
     message: payload?.message || "The unsubscribe request was sent.",
-    status: payload?.status
+    status: payload?.status,
+    requiresBrowser: payload?.requiresBrowser,
+    finalUrl: payload?.finalUrl
   };
 }

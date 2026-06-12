@@ -9,12 +9,13 @@ import {
   performOneClickUnsubscribe,
   recordUnsubscribedSender
 } from "../lib/unsubscribeClient";
+import { openDialogAndWait } from "../office/dialog";
 import { waitForOutlookMessageContext } from "../office/host";
 import { readCurrentMessageInfo } from "../office/messageInfo";
 import { readCurrentMessageBodyHtml, readCurrentMessageHeaders } from "../office/readHeaders";
 import { ScanPanel } from "./ScanPanel";
 
-type UiState = "booting" | "preview" | "reading" | "submitting" | "success" | "warning" | "error";
+type UiState = "booting" | "preview" | "reading" | "submitting" | "success" | "warning" | "error" | "awaitingDialog";
 
 type Notice = {
   title: string;
@@ -128,13 +129,27 @@ export function App() {
 
     try {
       const response =
-        method === "one-click"
-          ? await performOneClickUnsubscribe(url)
-          : await performBodyLinkUnsubscribe(url, readCurrentMessageInfo()?.userEmail);
+        method === "one-click" ? await performOneClickUnsubscribe(url) : await performBodyLinkUnsubscribe(url);
 
       if (!response.ok) {
         setState("error");
         setNotice({ title: "Unsubscribe request failed", body: response.message });
+        return;
+      }
+
+      if (response.requiresBrowser && response.finalUrl) {
+        setState("awaitingDialog");
+        setNotice({
+          title: "Finish in the preference page",
+          body: response.message
+        });
+        await openDialogAndWait(response.finalUrl);
+        const cleanup = await recordAndMoveToDeleted(method);
+        setState("success");
+        setNotice({
+          title: "Unsubscribe completed",
+          body: `Thanks — the preference page was opened.${cleanup}`
+        });
         return;
       }
 
@@ -189,7 +204,7 @@ export function App() {
     }, 500);
   }
 
-  const isBusy = state === "reading" || state === "submitting";
+  const isBusy = state === "reading" || state === "submitting" || state === "awaitingDialog";
   const showRetry = state === "warning" || state === "error";
   const userEmail = readCurrentMessageInfo()?.userEmail ?? "";
 
@@ -256,7 +271,7 @@ export function App() {
 
 function StatusPanel({ state, notice }: { state: UiState; notice: Notice }) {
   const icon =
-    state === "reading" || state === "submitting" || state === "booting" ? (
+    state === "reading" || state === "submitting" || state === "booting" || state === "awaitingDialog" ? (
       <Loader2 className="spin" size={22} />
     ) : state === "success" ? (
       <CheckCircle2 size={22} />

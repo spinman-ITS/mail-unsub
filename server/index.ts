@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { addAuditEntry, getAuditEntries, redactUrl } from "./auditLog";
 import { createSenderStore, emailDomain, normalizeEmail } from "./db";
-import { buildMarketoUnsubscribeBody, findMarketoUnsubscribeForm } from "./marketo";
+import { isPreferenceCenter } from "./marketo";
 import { isSafeRedirectTarget, validateUnsubscribeUrl } from "./safety";
 
 const app = express();
@@ -43,8 +43,7 @@ app.post("/api/unsubscribe", async (request, response) => {
 
 app.post("/api/unsubscribe-link", async (request, response) => {
   const url = typeof request.body?.url === "string" ? request.body.url : "";
-  const userEmail = typeof request.body?.userEmail === "string" ? normalizeEmail(request.body.userEmail) : "";
-  await submitUnsubscribeRequest(url, "GET", response, userEmail.includes("@") ? userEmail : undefined);
+  await submitUnsubscribeRequest(url, "GET", response);
 });
 
 app.get("/health", (_request, response) => {
@@ -116,8 +115,7 @@ if (isLocalDev) {
 async function submitUnsubscribeRequest(
   url: string,
   method: "GET" | "POST",
-  response: express.Response,
-  userEmail?: string
+  response: express.Response
 ) {
   const validation = await validateUnsubscribeUrl(url);
 
@@ -196,26 +194,41 @@ async function submitUnsubscribeRequest(
     }
 
     if (finalResponse.status >= 200 && finalResponse.status < 300) {
+      const preferencePageUrl =
+        method === "GET" ? await detectPreferenceCenter(finalResponse, currentUrl) : null;
+
       addAuditEntry({
         method,
         target: redactUrl(validation.url),
         outcome: "accepted",
         status: finalResponse.status,
-        message: method === "POST" ? "One-click unsubscribe accepted." : "Unsubscribe link opened.",
+        message: preferencePageUrl
+          ? "Preference center detected, opening for user."
+          : method === "POST"
+            ? "One-click unsubscribe accepted."
+            : "Unsubscribe link opened.",
         redirectTarget: currentUrl === validation.url ? undefined : redactUrl(currentUrl)
       });
-      const formMessage =
-        method === "GET" && userEmail
-          ? await tryPreferenceFormSubmit(finalResponse, currentUrl, userEmail)
-          : null;
+
+      if (preferencePageUrl) {
+        response.json({
+          ok: true,
+          requiresBrowser: true,
+          finalUrl: preferencePageUrl,
+          status: finalResponse.status,
+          message:
+            "This sender uses an email preference page. Check \"Unsubscribe from all\" and submit the form in the window that opens."
+        });
+        return;
+      }
+
       response.json({
         ok: true,
         status: finalResponse.status,
         message:
-          formMessage ??
-          (method === "POST"
+          method === "POST"
             ? "The sender accepted the one-click unsubscribe request."
-            : "The unsubscribe link was opened successfully.")
+            : "The unsubscribe link was opened successfully."
       });
       return;
     }
@@ -250,65 +263,15 @@ async function submitUnsubscribeRequest(
   }
 }
 
-async function tryPreferenceFormSubmit(
-  pageResponse: Response,
-  pageUrl: string,
-  userEmail: string
-): Promise<string | null> {
-  let html: string;
+async function detectPreferenceCenter(pageResponse: Response, pageUrl: string): Promise<string | null> {
   try {
     const contentType = pageResponse.headers.get("content-type") ?? "";
     if (!contentType.includes("html")) {
       return null;
     }
-    html = (await pageResponse.text()).slice(0, 1_000_000);
+    const html = (await pageResponse.text()).slice(0, 1_000_000);
+    return isPreferenceCenter(html) ? pageUrl : null;
   } catch {
     return null;
-  }
-
-  const target = findMarketoUnsubscribeForm(html, pageUrl);
-  if (!target || !isSafeRedirectTarget(target.submitUrl)) {
-    return null;
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const submitResponse = await fetch(target.submitUrl, {
-      method: "POST",
-      redirect: "manual",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "Outlook-Unsubscribe-Addin/0.1"
-      },
-      body: buildMarketoUnsubscribeBody(userEmail, target)
-    });
-
-    const accepted = submitResponse.status >= 200 && submitResponse.status < 400;
-    addAuditEntry({
-      method: "POST",
-      target: redactUrl(target.submitUrl),
-      outcome: accepted ? "accepted" : "failed",
-      status: submitResponse.status,
-      message: accepted
-        ? `Preference-center unsubscribe form submitted for ${userEmail}.`
-        : `Preference-center form submission returned HTTP ${submitResponse.status}.`
-    });
-
-    return accepted
-      ? "This sender uses an email preference page, so the unsubscribe-from-all form was submitted for you. Changes can take a few days to apply."
-      : "An email preference page was found, but the automatic form submission failed. Open the unsubscribe link in a browser to finish manually.";
-  } catch {
-    addAuditEntry({
-      method: "POST",
-      target: redactUrl(target.submitUrl),
-      outcome: "failed",
-      message: "Preference-center form submission failed before completion."
-    });
-    return "An email preference page was found, but the automatic form submission failed. Open the unsubscribe link in a browser to finish manually.";
-  } finally {
-    clearTimeout(timeout);
   }
 }

@@ -1,39 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { buildMarketoUnsubscribeBody, findMarketoUnsubscribeForm } from "../server/marketo";
+import { isPreferenceCenter } from "../server/marketo";
 
 const sampleHtml = `
 <script src="/js/forms2/js/forms2.min.js"></script>
 <form class="mktoForm" id="mktoForm_51875">
-var formDescriptor = {"Id":51875,"Vid":51875,"Status":"approved","rows":[[{"Id":957124,"Name":"Unsubscribed","Datatype":"single_checkbox"}]],"action":"\\/index.php\\/leadCapture\\/save2","munchkinId":"596-INX-704"};
+var formDescriptor = {
+  "Id": 51875,
+  "Vid": 51875,
+  "rows": [
+    [{"Id":957121,"Name":"Email","Datatype":"email"}],
+    [{"Id":957124,"Name":"Unsubscribed","Datatype":"single_checkbox","PicklistValues":[{"label":"","value":"yes"}]}]
+  ],
+  "action": "\\/index.php\\/leadCapture\\/save2",
+  "munchkinId": "596-INX-704"
+};
 `;
 
-describe("findMarketoUnsubscribeForm", () => {
-  it("extracts the form target from a preference center page", () => {
-    const target = findMarketoUnsubscribeForm(sampleHtml, "https://pages.itglue.com/PreferenceCenter.html");
-
-    expect(target).toEqual({
-      submitUrl: "https://pages.itglue.com/index.php/leadCapture/save2",
-      formId: "51875",
-      munchkinId: "596-INX-704"
-    });
+describe("isPreferenceCenter", () => {
+  it("detects Marketo preference centers", () => {
+    expect(isPreferenceCenter(sampleHtml)).toBe(true);
   });
 
-  it("returns null when there is no Unsubscribed field", () => {
-    const html = sampleHtml.replace("Unsubscribed", "FirstName");
-    expect(findMarketoUnsubscribeForm(html, "https://pages.example.com/p.html")).toBeNull();
+  it("returns false when the form descriptor is missing", () => {
+    expect(isPreferenceCenter('<html><body>"Name":"Unsubscribed"</body></html>')).toBe(false);
   });
 
-  it("returns null for non-Marketo pages", () => {
-    expect(findMarketoUnsubscribeForm("<html><body>hello</body></html>", "https://example.com")).toBeNull();
+  it("returns false without the Unsubscribed field", () => {
+    expect(isPreferenceCenter(sampleHtml.replace(/"Unsubscribed"/g, '"FirstName"'))).toBe(false);
   });
 
-  it("builds the unsubscribe-all submission body", () => {
-    const target = findMarketoUnsubscribeForm(sampleHtml, "https://pages.itglue.com/PreferenceCenter.html")!;
-    const body = buildMarketoUnsubscribeBody("sean@example.com", target);
-
-    expect(body).toContain("formid=51875");
-    expect(body).toContain("munchkinId=596-INX-704");
-    expect(body).toContain("Email=sean%40example.com");
-    expect(body).toContain("Unsubscribed=yes");
+  it("returns false for non-Marketo pages", () => {
+    expect(isPreferenceCenter("<html><body>hello</body></html>")).toBe(false);
   });
 });

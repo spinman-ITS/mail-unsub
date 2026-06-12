@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Loader2, Mail, ShieldCheck, Undo2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Mail, MailOpen, RefreshCw, ShieldCheck, Undo2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { findBodyUnsubscribeLinks } from "../lib/bodyLinks";
 import { getCurrentMessageRestId, moveMessageToDeletedItems } from "../lib/graph";
@@ -11,11 +11,20 @@ import {
 } from "../lib/unsubscribeClient";
 import { openDialogAndWait } from "../office/dialog";
 import { waitForOutlookMessageContext } from "../office/host";
-import { readCurrentMessageInfo } from "../office/messageInfo";
+import { readCurrentMessageInfo, type CurrentMessageInfo } from "../office/messageInfo";
 import { readCurrentMessageBodyHtml, readCurrentMessageHeaders } from "../office/readHeaders";
 import { ScanPanel } from "./ScanPanel";
 
-type UiState = "booting" | "preview" | "reading" | "submitting" | "success" | "warning" | "error" | "awaitingDialog";
+type UiState =
+  | "booting"
+  | "preview"
+  | "reading"
+  | "ready"
+  | "submitting"
+  | "awaitingDialog"
+  | "success"
+  | "warning"
+  | "error";
 
 type Notice = {
   title: string;
@@ -24,14 +33,26 @@ type Notice = {
 
 type View = "message" | "scan";
 
+type DetectedAction =
+  | { kind: "one-click"; url: string }
+  | { kind: "body-link"; url: string }
+  | { kind: "mailto"; url: string };
+
+const methodLabels: Record<DetectedAction["kind"], string> = {
+  "one-click": "One-click unsubscribe (RFC 8058)",
+  "body-link": "Unsubscribe link in email body",
+  mailto: "Email-based unsubscribe"
+};
+
 export function App() {
   const [isOutlookMessage, setIsOutlookMessage] = useState<boolean | null>(null);
   const [state, setState] = useState<UiState>("booting");
   const [view, setView] = useState<View>("message");
   const [aadClientId, setAadClientId] = useState<string | null>(null);
-  // The auto-run unsubscribe closure starts before state updates land, so it reads the ref.
   const aadClientIdRef = useRef<string | null>(null);
   const [headers, setHeaders] = useState<UnsubscribeHeaders | null>(null);
+  const [action, setAction] = useState<DetectedAction | null>(null);
+  const [messageInfo, setMessageInfo] = useState<CurrentMessageInfo | null>(null);
   const [notice, setNotice] = useState<Notice>({
     title: "Preparing unsubscribe",
     body: "Connecting to Outlook and reading the selected message."
@@ -59,7 +80,7 @@ export function App() {
         return;
       }
 
-      await inspectAndUnsubscribe();
+      await inspectMessage();
     }
 
     run();
@@ -69,37 +90,25 @@ export function App() {
     };
   }, []);
 
-  async function inspectAndUnsubscribe() {
+  async function inspectMessage() {
     setState("reading");
+    setAction(null);
     setNotice({ title: "Checking this email", body: "Looking for a standards-based unsubscribe method." });
 
     try {
+      setMessageInfo(readCurrentMessageInfo());
       const rawHeaders = await readCurrentMessageHeaders();
       const parsed = parseUnsubscribeHeaders(rawHeaders);
       setHeaders(parsed);
 
-      if (parsed.oneClick && parsed.httpsUrls.length > 0) {
-        await submitUnsubscribe(parsed.httpsUrls[0], "one-click");
-        return;
-      }
-
-      if (parsed.mailtoUrls.length > 0) {
-        openMailto(parsed.mailtoUrls[0]);
-        return;
-      }
-
-      const bodyHtml = await readCurrentMessageBodyHtml();
-      const bodyLinks = findBodyUnsubscribeLinks(bodyHtml);
-      const bodyHttpsUrl = bodyLinks.find((link) => link.url.toLowerCase().startsWith("https://"))?.url;
-      const bodyMailtoUrl = bodyLinks.find((link) => link.url.toLowerCase().startsWith("mailto:"))?.url;
-
-      if (bodyHttpsUrl) {
-        await submitUnsubscribe(bodyHttpsUrl, "body-link");
-        return;
-      }
-
-      if (bodyMailtoUrl) {
-        openMailto(bodyMailtoUrl);
+      const detected = await detectAction(parsed);
+      if (detected) {
+        setAction(detected);
+        setState("ready");
+        setNotice({
+          title: "Ready to unsubscribe",
+          body: "Review the sender and method, then click Unsubscribe & delete to proceed."
+        });
         return;
       }
 
@@ -117,19 +126,49 @@ export function App() {
     }
   }
 
-  async function submitUnsubscribe(url: string, method: "one-click" | "body-link") {
+  async function detectAction(parsed: UnsubscribeHeaders): Promise<DetectedAction | null> {
+    if (parsed.oneClick && parsed.httpsUrls.length > 0) {
+      return { kind: "one-click", url: parsed.httpsUrls[0] };
+    }
+    if (parsed.mailtoUrls.length > 0) {
+      return { kind: "mailto", url: parsed.mailtoUrls[0] };
+    }
+
+    const bodyHtml = await readCurrentMessageBodyHtml();
+    const bodyLinks = findBodyUnsubscribeLinks(bodyHtml);
+    const bodyHttpsUrl = bodyLinks.find((link) => link.url.toLowerCase().startsWith("https://"))?.url;
+    if (bodyHttpsUrl) {
+      return { kind: "body-link", url: bodyHttpsUrl };
+    }
+    const bodyMailtoUrl = bodyLinks.find((link) => link.url.toLowerCase().startsWith("mailto:"))?.url;
+    if (bodyMailtoUrl) {
+      return { kind: "mailto", url: bodyMailtoUrl };
+    }
+    return null;
+  }
+
+  async function runUnsubscribe() {
+    if (!action) return;
+
+    if (action.kind === "mailto") {
+      openMailto(action.url);
+      return;
+    }
+
     setState("submitting");
     setNotice({
       title: "Unsubscribing",
       body:
-        method === "one-click"
+        action.kind === "one-click"
           ? "Sending the one-click unsubscribe request for this email."
           : "Opening the unsubscribe link from the email footer."
     });
 
     try {
       const response =
-        method === "one-click" ? await performOneClickUnsubscribe(url) : await performBodyLinkUnsubscribe(url);
+        action.kind === "one-click"
+          ? await performOneClickUnsubscribe(action.url)
+          : await performBodyLinkUnsubscribe(action.url);
 
       if (!response.ok) {
         setState("error");
@@ -139,12 +178,9 @@ export function App() {
 
       if (response.requiresBrowser && response.finalUrl) {
         setState("awaitingDialog");
-        setNotice({
-          title: "Finish in the preference page",
-          body: response.message
-        });
+        setNotice({ title: "Finish in the preference page", body: response.message });
         await openDialogAndWait(response.finalUrl);
-        const cleanup = await recordAndMoveToDeleted(method);
+        const cleanup = await recordAndMoveToDeleted(action.kind);
         setState("success");
         setNotice({
           title: "Unsubscribe completed",
@@ -153,7 +189,7 @@ export function App() {
         return;
       }
 
-      const cleanup = await recordAndMoveToDeleted(method);
+      const cleanup = await recordAndMoveToDeleted(action.kind);
       setState("success");
       setNotice({
         title: "Unsubscribe request sent",
@@ -169,7 +205,7 @@ export function App() {
   }
 
   async function recordAndMoveToDeleted(method: string): Promise<string> {
-    const info = readCurrentMessageInfo();
+    const info = messageInfo ?? readCurrentMessageInfo();
     if (info) {
       await recordUnsubscribedSender(info.userEmail, info.senderAddress, method);
     }
@@ -189,7 +225,7 @@ export function App() {
   }
 
   function openMailto(url: string) {
-    const info = readCurrentMessageInfo();
+    const info = messageInfo ?? readCurrentMessageInfo();
     if (info) {
       recordUnsubscribedSender(info.userEmail, info.senderAddress, "mailto");
     }
@@ -197,7 +233,7 @@ export function App() {
     setState("warning");
     setNotice({
       title: "Opening unsubscribe email",
-      body: "This sender uses an email-based unsubscribe fallback, so Outlook may open a prefilled message."
+      body: "Outlook will open a prefilled message to the sender's unsubscribe address."
     });
     window.setTimeout(() => {
       window.location.href = url;
@@ -206,7 +242,7 @@ export function App() {
 
   const isBusy = state === "reading" || state === "submitting" || state === "awaitingDialog";
   const showRetry = state === "warning" || state === "error";
-  const userEmail = readCurrentMessageInfo()?.userEmail ?? "";
+  const userEmail = messageInfo?.userEmail ?? "";
 
   return (
     <main className="shell">
@@ -216,7 +252,7 @@ export function App() {
         </div>
         <div>
           <h1>Unsubscribe</h1>
-          <p>Check the selected message for a safe unsubscribe method.</p>
+          <p>Review the sender, then choose what to unsubscribe from.</p>
         </div>
       </section>
 
@@ -235,11 +271,29 @@ export function App() {
         <>
           <StatusPanel state={state} notice={notice} />
 
+          {state === "ready" && action ? (
+            <ReadyPanel
+              info={messageInfo}
+              action={action}
+              hasGraph={Boolean(aadClientId)}
+              onConfirm={runUnsubscribe}
+            />
+          ) : null}
+
           {showRetry ? (
             <section className="actions" aria-label="Unsubscribe actions">
-              <button className="quiet" onClick={inspectAndUnsubscribe} disabled={isBusy || !isOutlookMessage}>
+              <button className="quiet" onClick={inspectMessage} disabled={isBusy || !isOutlookMessage}>
                 <Undo2 size={18} />
                 Try again
+              </button>
+            </section>
+          ) : null}
+
+          {state === "success" ? (
+            <section className="actions" aria-label="After unsubscribe">
+              <button className="quiet" onClick={() => setView("scan")}>
+                <Mail size={18} />
+                Scan this folder for more
               </button>
             </section>
           ) : null}
@@ -269,10 +323,63 @@ export function App() {
   );
 }
 
+function ReadyPanel({
+  info,
+  action,
+  hasGraph,
+  onConfirm
+}: {
+  info: CurrentMessageInfo | null;
+  action: DetectedAction;
+  hasGraph: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <section className="ready" aria-label="Unsubscribe preview">
+      {info ? (
+        <div className="ready-sender">
+          <span className="ready-label">Sender</span>
+          <strong>{info.senderName}</strong>
+          <span>{info.senderAddress}</span>
+        </div>
+      ) : null}
+
+      <div className="ready-method">
+        <span className="ready-label">Method</span>
+        <strong>{methodLabels[action.kind]}</strong>
+      </div>
+
+      <ul className="ready-plan">
+        {action.kind === "mailto" ? (
+          <li>Outlook will compose an unsubscribe email to the sender.</li>
+        ) : action.kind === "one-click" ? (
+          <li>Send an RFC 8058 one-click unsubscribe request to the sender.</li>
+        ) : (
+          <li>Open the unsubscribe link found in the email footer.</li>
+        )}
+        <li>
+          {hasGraph
+            ? "Move this email to Deleted Items after the unsubscribe completes."
+            : "Move-to-Deleted is disabled: configure Microsoft Graph to enable it."}
+        </li>
+      </ul>
+
+      <section className="actions">
+        <button className="primary" onClick={onConfirm}>
+          {action.kind === "mailto" ? <MailOpen size={18} /> : <Undo2 size={18} />}
+          {action.kind === "mailto" ? "Open unsubscribe email" : "Unsubscribe & delete"}
+        </button>
+      </section>
+    </section>
+  );
+}
+
 function StatusPanel({ state, notice }: { state: UiState; notice: Notice }) {
   const icon =
     state === "reading" || state === "submitting" || state === "booting" || state === "awaitingDialog" ? (
       <Loader2 className="spin" size={22} />
+    ) : state === "ready" ? (
+      <RefreshCw size={22} />
     ) : state === "success" ? (
       <CheckCircle2 size={22} />
     ) : state === "warning" ? (
